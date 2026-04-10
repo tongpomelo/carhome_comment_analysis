@@ -1,0 +1,328 @@
+# 1. 加载必要的包
+```{r}
+# 加载必要的包
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(readxl)
+library(dplyr)
+library(ggplot2)
+library(stringr)
+library(lubridate)
+library(scales)  # 用于颜色调色板
+```
+
+# 2. 读取文件处理
+```{r}
+# 读取Excel文件
+df <- read_excel("merged_autohome_reviews.xlsx", )
+
+# 查看数据结构
+str(df)
+head(df)
+```
+
+# 3. 数据处理
+```{r}
+# 提取车型信息和购买年份
+df <- df %>%
+  mutate(
+    车型完整名称 = paste(`车型名称`, sep = " - "),
+    车型完整名称 = str_trim(车型完整名称),
+    # 从购买时间中提取年份
+    购买年份 = ifelse(!is.na(`购买时间`), 
+                     year(as.Date(`购买时间`)), 
+                     NA)
+  )
+
+# 只选取2016年后的数据
+df_filtered <- df %>%
+  filter(!is.na(购买年份) & 购买年份 >= 2016)
+
+# 统计每个车型每年度的评论数量（仅2016年后）
+comment_counts <- df_filtered %>%
+  group_by(车型完整名称, 购买年份) %>%
+  summarise(
+    评论数量 = n(),
+    .groups = 'drop'
+  ) %>%
+  arrange(desc(评论数量))
+
+# 计算每个车型的总评论数，用于排序
+model_totals <- comment_counts %>%
+  group_by(车型完整名称) %>%
+  summarise(总评论数量 = sum(评论数量)) %>%
+  arrange(总评论数量)  # 升序排列，使图形从下到上递增
+
+# 按照总评论数排序车型
+comment_counts <- comment_counts %>%
+  mutate(
+    车型完整名称 = factor(车型完整名称, 
+                         levels = model_totals$车型完整名称)
+  )
+
+# 查看统计结果
+cat("2016年后的年份分布：", paste(sort(unique(comment_counts$购买年份)), collapse = ", "), "\n")
+cat("年份数量：", length(unique(comment_counts$购买年份)), "\n")
+print(comment_counts)
+
+# 创建颜色调色板 - 为2016-2026年分配11种不同的颜色
+# 首先定义2016-2026这11年
+all_years_2016_to_2026 <- 2016:2026
+
+# 使用Set3调色板（最多12种颜色，适合11年）
+# 或者使用Paired调色板（12种颜色，对比度好）
+# 或者使用自定义的颜色向量
+
+# 方法1：使用Set3调色板（11种颜色）
+set3_colors <- brewer_pal(palette = "Set3")(11)
+names(set3_colors) <- as.character(all_years_2016_to_2026)
+
+# 方法2：使用Paired调色板（12种颜色，取前11种）
+paired_colors <- brewer_pal(palette = "Paired")(11)
+names(paired_colors) <- as.character(all_years_2016_to_2026)
+
+# 方法3：使用自定义的彩虹色（11种）
+rainbow_colors <- rainbow(11, s = 0.8, v = 0.8)
+names(rainbow_colors) <- as.character(all_years_2016_to_2026)
+
+# 方法4：使用渐变色（从蓝色到红色）
+gradient_colors <- colorRampPalette(c("#1E88E5", "#D81B60"))(11)
+names(gradient_colors) <- as.character(all_years_2016_to_2026)
+
+# 选择一种颜色方案（这里选择Set3）
+year_colors <- set3_colors
+
+# 只保留数据中实际存在的年份颜色
+actual_years <- as.character(unique(comment_counts$购买年份))
+year_colors <- year_colors[actual_years]
+
+# 将购买年份转换为有序因子，确保正确的顺序
+comment_counts <- comment_counts %>%
+  mutate(
+    购买年份 = factor(购买年份, 
+                    levels = rev(sort(unique(comment_counts$购买年份))),  # 最新的年份在前
+                    ordered = TRUE)
+  )
+
+# 创建纵向堆积柱状图（条形水平）
+p <- ggplot(comment_counts, aes(x = 评论数量, 
+                               y = 车型完整名称, 
+                               fill = 购买年份)) +
+  geom_bar(stat = "identity", position = "stack", width = 0.7) +
+  # 添加每个部分的标签（显示每个年份的数量）
+  geom_text(aes(label = 评论数量), 
+            position = position_stack(vjust = 0.5), 
+            size = 3.5, color = "black", fontface = "bold") +
+  # 添加总数标签（在条形右侧）
+  geom_text(
+    data = model_totals,
+    aes(x = 总评论数量, y = 车型完整名称, label = 总评论数量, fill = NULL),
+    hjust = -0.2, size = 4, color = "darkred", fontface = "bold"
+  ) +
+  labs(
+    title = "各车型评论数量统计（2016年及以后）",
+    subtitle = paste("数据年份范围：", min(comment_counts$购买年份), "-", max(comment_counts$购买年份), 
+                     " | 使用11种不同颜色区分各年份"),
+    x = "评论数量",
+    y = "车型",
+    fill = "购买年份",
+    caption = paste("数据来源：汽车之家 SUV 车型口碑评论\n统计时间：", Sys.Date())
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold", 
+                              margin = margin(b = 8)),
+    plot.subtitle = element_text(hjust = 0.5, size = 12, color = "gray40",
+                                 margin = margin(b = 15)),
+    axis.title.x = element_text(size = 12, face = "bold", margin = margin(t = 10)),
+    axis.title.y = element_text(size = 12, face = "bold", margin = margin(r = 10)),
+    axis.text.y = element_text(size = 10, face = "bold"),
+    axis.text.x = element_text(size = 10),
+    legend.position = "right",
+    legend.title = element_text(size = 11, face = "bold"),
+    legend.text = element_text(size = 10),
+    legend.key.size = unit(0.8, "cm"),
+    legend.key.height = unit(0.6, "cm"),  # 调整图例键高度
+    panel.grid.major = element_line(color = "grey90", size = 0.2),
+    panel.grid.minor = element_blank(),
+    plot.caption = element_text(size = 9, color = "grey50", margin = margin(t = 10)),
+    plot.margin = margin(1, 2, 1, 1, "cm")  # 增加右侧边距给图例和标签
+  ) +
+  scale_fill_manual(
+    values = year_colors,
+    na.value = "grey70",
+    guide = guide_legend(
+      reverse = TRUE,  # 反转图例，使最新年份在顶部
+      ncol = 1,        # 图例单列显示
+      keyheight = unit(0.8, "cm"),
+      keywidth = unit(1.2, "cm")
+    )
+  ) +
+  scale_x_continuous(
+    expand = expansion(mult = c(0, 0.15)),  # 调整x轴范围，为标签留出空间
+    breaks = scales::pretty_breaks(n = 10)
+  ) +
+  # 添加网格线
+  theme(
+    panel.grid.major.x = element_line(color = "grey85", size = 0.3),
+    panel.grid.major.y = element_blank()
+  )
+
+# 显示图形
+print(p)
+
+# 保存图形（PNG格式）
+ggsave("车型评论数量统计_2016年后_纵向.png", 
+       plot = p, 
+       width = 16,  # 增加宽度以容纳标签和图例
+       height = 10, # 增加高度以显示所有车型
+       dpi = 300, 
+       bg = "white")
+
+# 保存图形（PDF格式）
+ggsave("车型评论数量统计_2016年后_纵向.pdf", 
+       plot = p, 
+       width = 16, 
+       height = 10)
+
+# 创建数据透视表格式的统计结果
+comment_counts_pivot <- comment_counts %>%
+  mutate(购买年份 = as.character(购买年份)) %>%  # 将因子转回字符
+  tidyr::pivot_wider(
+    names_from = 购买年份,
+    values_from = 评论数量,
+    values_fill = 0
+  ) %>%
+  mutate(总计 = rowSums(across(where(is.numeric)))) %>%
+  arrange(desc(总计))
+
+# 输出统计结果到CSV文件
+write.csv(comment_counts_pivot, "车型评论数量统计_2016年后_纵向.csv", 
+          row.names = FALSE, fileEncoding = "UTF-8")
+
+# 显示统计摘要
+cat("\n✅ 分析完成！\n")
+cat("📊 车型评论数量统计（2016年及以后）：\n")
+print(comment_counts_pivot)
+
+# 显示按年份的总计
+year_totals <- comment_counts %>%
+  mutate(购买年份 = as.character(购买年份)) %>%
+  group_by(购买年份) %>%
+  summarise(年份总计 = sum(评论数量)) %>%
+  arrange(desc(购买年份))
+
+cat("\n📅 按年份总计：\n")
+print(year_totals)
+
+cat("\n🎨 使用的颜色方案：Set3调色板（11种颜色）\n")
+cat("📈 图形已保存为：'车型评论数量统计_2016年后_纵向.png' 和 '车型评论数量统计_2016年后_纵向.pdf'\n")
+cat("📄 数据已保存为：'车型评论数量统计_2016年后_纵向.csv'\n")
+
+# 显示颜色对应表
+cat("\n🌈 年份-颜色对应表：\n")
+color_table <- data.frame(
+  年份 = names(year_colors),
+  颜色代码 = year_colors,
+  颜色预览 = sapply(year_colors, function(col) {
+    paste0("<span style='color:", col, "'>■■■■</span>")
+  })
+)
+print(color_table)
+
+```
+
+
+# 4.合并评论文本列，计算每条评论的字数
+```{r}
+# 4. 合并评论文本列，计算每条评论的字数
+# 定义需要合并的列名（请确认列名与实际数据完全一致）
+text_columns <- c('最满意', '最不满意', '空间评论', '驾驶感受评论',
+                  '续航评论', '外观评论', '内饰评论', '性价比评论',
+                  '智能化评论', '油耗评论', '配置评论')
+
+# 合并文本并计算字数（忽略NA值）
+df_filtered <- df_filtered %>%
+  mutate(
+    合并文本 = apply(select(., all_of(text_columns)), 1, function(x) {
+      # 将NA转为空字符串，然后合并，用空格分隔
+      paste(ifelse(is.na(x), "", x), collapse = " ")
+    }),
+    字数 = str_length(合并文本)  # 或使用 nchar()
+  )
+
+# 确保车型因子的顺序与上一张图一致（按总评论数升序）
+df_filtered <- df_filtered %>%
+  mutate(车型完整名称 = factor(车型完整名称, levels = model_totals$车型完整名称))
+
+# 5. 绘制纵向箱线图（y轴为车型，x轴为字数）
+p_box <- ggplot(df_filtered, aes(x = 字数, y = 车型完整名称)) +
+  geom_boxplot(
+    fill = "lightblue", 
+    color = "darkblue", 
+    outlier.color = "red", 
+    outlier.shape = 1,
+    width = 0.5                # 控制箱体宽度，使其更窄
+  ) +
+  labs(
+    title = "各车型评论文本字数分布",
+    subtitle = "基于合并后的全部评论字段（最满意、最不满意等）计算每条评论的总字数",
+    x = "评论字数",
+    y = "车型",
+    caption = paste("数据来源：汽车之家 车型口碑评论\n统计时间：", Sys.Date())
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold", margin = margin(b = 8)),
+    plot.subtitle = element_text(hjust = 0.5, size = 12, color = "gray40", margin = margin(b = 15)),
+    axis.title.x = element_text(size = 12, face = "bold", margin = margin(t = 10)),
+    axis.title.y = element_text(size = 12, face = "bold", margin = margin(r = 10)),
+    axis.text.y = element_text(size = 10, face = "bold"),
+    axis.text.x = element_text(size = 10),
+    panel.grid.major = element_line(color = "grey90", size = 0.2),
+    panel.grid.minor = element_blank(),
+    plot.margin = margin(1, 1, 1, 1, "cm")
+  ) +
+  scale_x_continuous(
+    breaks = scales::pretty_breaks(n = 10),
+    expand = expansion(mult = c(0, 0.05))   # x轴从0开始，右侧留少许空白
+  )
+
+# 显示图形
+print(p_box)
+
+# 6. 保存图形（可根据需要调整宽度和高度，若车型较多可适当增加高度）
+ggsave("车型评论字数分布箱线图.png", 
+       plot = p_box, 
+       width = 12, 
+       height = max(6, 0.3 * n_distinct(df_filtered$车型完整名称)),  # 动态高度
+       dpi = 300, 
+       bg = "white")
+ggsave("车型评论字数分布箱线图.pdf", 
+       plot = p_box, 
+       width = 3, 
+       height = max(6, 0.3 * n_distinct(df_filtered$车型完整名称)))
+
+# 7. 输出字数统计汇总表（可选）
+word_stats <- df_filtered %>%
+  group_by(车型完整名称) %>%
+  summarise(
+    评论数量 = n(),
+    平均字数 = mean(字数, na.rm = TRUE),
+    中位数字数 = median(字数, na.rm = TRUE),
+    最小字数 = min(字数, na.rm = TRUE),
+    最大字数 = max(字数, na.rm = TRUE),
+    标准差 = sd(字数, na.rm = TRUE)
+  ) %>%
+  arrange(desc(平均字数))
+
+print(word_stats)
+
+# 保存统计表
+write.csv(word_stats, "车型评论字数统计.csv", row.names = FALSE, fileEncoding = "UTF-8")
+
+cat("\n📊 评论字数统计已完成，结果已保存为 CSV 文件。\n")
+```
+
